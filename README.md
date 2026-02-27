@@ -34,3 +34,12 @@ An Android video player built with libVLC and Jetpack Compose, designed primaril
 2. In Stremio, go to Settings and set the external player
 3. When you play a video in Stremio, select "JAVC Player (Just Another Vibe Coded Player)" from the app chooser
 4. The video will open in this player with full controls
+
+# OK No more Ai generated stuff under here.
+1. No, I did not make this. I don't know Kotlin.
+2. No, I will not be attempting an ios version of this.
+3. I can ask Cursor to add requested features, but if they don't work they don't work.
+4. This was made to my own very specific use case.
+5. If this doesn't work on your phone, idk bro.
+
+## [Download it here](https://github.com/TheDWz/JAVC-Player/releases/tag/1.0)
