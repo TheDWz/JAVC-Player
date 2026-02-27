@@ -1,0 +1,24 @@
+# IDE - IntelliJ / Android Studio
+.idea/
+*.iml
+*.iws
+
+# Gradle
+.gradle/
+build/
+
+# Kotlin
+.kotlin/
+
+# Local configuration (STRICTLY IGNORE)
+# This contains your local SDK path and should never be committed
+local.properties
+
+# Secrets (Optional but recommended)
+# If you plan to use a secrets.properties file for API keys
+secrets.properties
+
+# System files
+.DS_Store
+Thumbs.db
+*.apk
