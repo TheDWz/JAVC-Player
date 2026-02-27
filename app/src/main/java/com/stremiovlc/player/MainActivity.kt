@@ -1,8 +1,15 @@
 package com.stremiovlc.player
 
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.drawable.Icon
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -44,6 +51,7 @@ import com.stremiovlc.player.viewmodel.PlayerViewModel
 class MainActivity : ComponentActivity() {
 
     private lateinit var viewModel: PlayerViewModel
+    private var pipParams: PictureInPictureParams? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +60,12 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
 
         viewModel = ViewModelProvider(this)[PlayerViewModel::class.java]
+        PipActionHandler.onTogglePlay = { viewModel.togglePlayPause() }
+
+        // Configure PiP parameters once, including auto-enter and actions on supported versions.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            updatePipParamsWithActions()
+        }
 
         val intentUri = extractUri(intent)
 
@@ -62,7 +76,9 @@ class MainActivity : ComponentActivity() {
                 if (isPlaying) {
                     PlayerScreen(
                         viewModel = viewModel,
-                        onBack = { finish() }
+                        onBack = { finish() },
+                        onBrightnessUp = { increaseBrightness() },
+                        onBrightnessDown = { decreaseBrightness() }
                     )
                 } else {
                     UrlEntryScreen(onPlay = { uri ->
@@ -96,12 +112,73 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val state = viewModel.playerState.value
+            if (state.isPlaying) {
+                // Enter PiP when the system is about to pause us (for older devices or when auto-enter
+                // doesn't trigger). On newer versions auto-enter should normally handle Home/Recents.
+                val params = pipParams
+                if (params != null && !isInPictureInPictureMode) {
+                    enterPictureInPictureMode(params)
+                }
+            }
+        }
+
         viewModel.savePositionNow()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // When coming back from background / PiP, make sure VLC
+        // is still attached to the existing SurfaceViews and that
+        // the video output is sized to the full-screen surface.
+        viewModel.playerWrapper.ensureSurfacesAttached()
+        window.decorView.post {
+            viewModel.playerWrapper.updateWindowSize()
+            // Nudge LibVLC to resync A/V after returning from PiP/background.
+            viewModel.playerWrapper.resyncPosition()
+        }
     }
 
     override fun onStop() {
         super.onStop()
         viewModel.savePositionNow()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // This callback is invoked when the user is leaving the activity
+        // via Home/Recents; it's the recommended place to enter PiP.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val state = viewModel.playerState.value
+            if (state.isPlaying && !isInPictureInPictureMode) {
+                val params = pipParams
+                if (params != null) {
+                    enterPictureInPictureMode(params)
+                }
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        viewModel.setPictureInPictureMode(isInPictureInPictureMode)
+
+        if (isInPictureInPictureMode) {
+            // When entering PiP, update the window size once the PiP layout has settled
+            // so the video scales and centers correctly inside the PiP window.
+            window.decorView.post {
+                viewModel.playerWrapper.updateWindowSize()
+                window.decorView.postDelayed({
+                    viewModel.playerWrapper.updateWindowSize()
+                    // After PiP has fully settled, resync A/V at the current timestamp.
+                    viewModel.playerWrapper.resyncPosition()
+                }, 150)
+            }
+        }
+        // When leaving PiP we don't touch the window size here; instead we correct it
+        // in onResume where the full-screen surface size is known.
     }
 
     private fun extractUri(intent: Intent?): Uri? {
@@ -111,12 +188,53 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
+    private fun updatePipParamsWithActions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(true)
+        }
+
+        // Single pause action for PiP; it toggles playback via PipActionHandler.
+        val intent = Intent(this, PipActionReceiver::class.java).setAction(PipActionHandler.ACTION_TOGGLE_PLAY)
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, flags)
+
+        val icon = Icon.createWithResource(this, android.R.drawable.ic_media_pause)
+        val action = RemoteAction(icon, "Pause", "Pause playback", pendingIntent)
+
+        builder.setActions(listOf(action))
+
+        val params = builder.build()
+        pipParams = params
+        setPictureInPictureParams(params)
+    }
+
     private fun hideSystemBars() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.hide(WindowInsetsCompat.Type.systemBars())
+    }
+
+    private var currentBrightness = 0.5f
+
+    fun increaseBrightness() {
+        currentBrightness = (currentBrightness + 0.05f).coerceIn(0.1f, 1f)
+        applyBrightness()
+    }
+
+    fun decreaseBrightness() {
+        currentBrightness = (currentBrightness - 0.05f).coerceIn(0.1f, 1f)
+        applyBrightness()
+    }
+
+    private fun applyBrightness() {
+        window.attributes = window.attributes.apply { screenBrightness = currentBrightness }
     }
 }
 

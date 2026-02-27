@@ -26,11 +26,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _showSpeedIndicator = MutableStateFlow(false)
     val showSpeedIndicator: StateFlow<Boolean> = _showSpeedIndicator.asStateFlow()
 
+    private val _isInPictureInPictureMode = MutableStateFlow(false)
+    val isInPictureInPictureMode: StateFlow<Boolean> = _isInPictureInPictureMode.asStateFlow()
+
     val playerState: StateFlow<PlayerState> = playerWrapper.state
 
     private var positionSaveJob: Job? = null
     private var lastSavedTimeMs = 0L
     private var resumeApplied = false
+    private var basePlaybackRate = 1.0f
+    private var isSpeedHoldActive = false
+
+    private val availablePlaybackRates = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
 
     fun loadAndPlay(uri: Uri) {
         val uriString = uri.toString()
@@ -99,13 +106,33 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onSpeedHoldStart() {
+        isSpeedHoldActive = true
         playerWrapper.setRate(2.0f)
         _showSpeedIndicator.value = true
     }
 
     fun onSpeedHoldEnd() {
-        playerWrapper.setRate(1.0f)
+        isSpeedHoldActive = false
+        playerWrapper.setRate(basePlaybackRate)
         _showSpeedIndicator.value = false
+    }
+
+    fun cyclePlaybackSpeed() {
+        val currentBaseIndex = availablePlaybackRates.indexOfFirst { it == basePlaybackRate }
+        val currentIndex = if (currentBaseIndex == -1) {
+            availablePlaybackRates.indexOfFirst { it == playerWrapper.getRate() }.takeIf { it != -1 } ?: 1
+        } else {
+            currentBaseIndex
+        }
+
+        val nextIndex = (currentIndex + 1) % availablePlaybackRates.size
+        val newRate = availablePlaybackRates[nextIndex]
+
+        basePlaybackRate = newRate
+
+        if (!isSpeedHoldActive) {
+            playerWrapper.setRate(newRate)
+        }
     }
 
     fun togglePlayPause() = playerWrapper.togglePlayPause()
@@ -115,6 +142,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setAudioTrack(id: Int) = playerWrapper.setAudioTrack(id)
     fun setSubtitleTrack(id: Int) = playerWrapper.setSubtitleTrack(id)
     fun setChapter(index: Int) = playerWrapper.setChapter(index)
+
+    fun setPictureInPictureMode(inPiP: Boolean) {
+        _isInPictureInPictureMode.value = inPiP
+    }
 
     override fun onCleared() {
         super.onCleared()

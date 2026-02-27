@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Optional but recommended: declare PiP capability -->
+    <uses-feature
+        android:name="android.software.picture_in_picture"
+        android:required="false" />
+
     <application
         android:name=".PlayerApplication"
         android:allowBackup="true"
@@ -17,6 +22,8 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.JAVCPlayer">
 
             <intent-filter>
@@ -43,6 +50,10 @@
             </intent-filter>
 
         </activity>
+
+        <receiver
+            android:name=".PipActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

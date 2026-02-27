@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -52,6 +53,8 @@ fun PlayerControls(
     onSkipBackward: () -> Unit,
     onTrackSelectionClick: () -> Unit,
     onBackClick: () -> Unit,
+    playbackSpeed: Float,
+    onSpeedClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -154,12 +157,24 @@ fun PlayerControls(
                         color = Color.White,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    IconButton(onClick = onTrackSelectionClick) {
-                        Icon(
-                            Icons.Default.Tune,
-                            contentDescription = "Track selection",
-                            tint = Color.White
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(onClick = onSpeedClick) {
+                            Text(
+                                text = "${playbackSpeed}x",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        IconButton(onClick = onTrackSelectionClick) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = "Track selection",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }
