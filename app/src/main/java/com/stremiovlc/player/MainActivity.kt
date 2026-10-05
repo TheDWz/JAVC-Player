@@ -89,7 +89,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        if (intentUri != null) {
+        // Skip on recreation (e.g. rotation): the ViewModel already holds this media.
+        if (intentUri != null && viewModel.currentUri.value != intentUri.toString()) {
             viewModel.loadAndPlay(intentUri)
         }
     }
