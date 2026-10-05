@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,9 +72,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                var isPlaying by remember { mutableStateOf(intentUri != null) }
+                val currentUri by viewModel.currentUri.collectAsState()
 
-                if (isPlaying) {
+                if (currentUri != null) {
                     PlayerScreen(
                         viewModel = viewModel,
                         onBack = { finish() },
@@ -83,7 +84,6 @@ class MainActivity : ComponentActivity() {
                 } else {
                     UrlEntryScreen(onPlay = { uri ->
                         viewModel.loadAndPlay(uri)
-                        isPlaying = true
                     })
                 }
             }
@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val state = viewModel.playerState.value
-            if (state.isPlaying) {
+            if (state.isPlaying && !isFinishing) {
                 // Enter PiP when the system is about to pause us (for older devices or when auto-enter
                 // doesn't trigger). On newer versions auto-enter should normally handle Home/Recents.
                 val params = pipParams

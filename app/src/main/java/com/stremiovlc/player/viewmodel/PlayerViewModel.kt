@@ -43,6 +43,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val uriString = uri.toString()
         _currentUri.value = uriString
         resumeApplied = false
+        lastSavedTimeMs = 0L
 
         playerWrapper.loadMedia(uri)
         playerWrapper.play()
@@ -91,7 +92,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun savePositionNow() {
         val uriString = _currentUri.value ?: return
         val state = playerWrapper.state.value
-        if (state.currentTimeMs > 0 && state.durationMs > 0) {
+        if (!state.isEnded && state.currentTimeMs > 0 && state.durationMs > 0) {
             viewModelScope.launch {
                 dao.savePosition(
                     PlaybackPositionEntity(

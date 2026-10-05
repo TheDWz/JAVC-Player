@@ -226,6 +226,9 @@ class VLCPlayerWrapper(context: Context) {
     }
 
     fun loadMedia(uri: Uri) {
+        // Drop stale state (time, duration, ended flag, tracks) from any previous media so
+        // it cannot be saved or deleted against the newly loaded URI.
+        _state.value = PlayerState(playbackRate = _state.value.playbackRate)
         val media = Media(libVLC, uri)
         media.setHWDecoderEnabled(true, false)
         media.addOption(":network-caching=1500")
@@ -250,8 +253,9 @@ class VLCPlayerWrapper(context: Context) {
     }
 
     fun skipForward(ms: Long = 10_000L) {
-        val newTime = (mediaPlayer.time + ms).coerceAtMost(mediaPlayer.length)
-        mediaPlayer.time = newTime
+        val length = mediaPlayer.length
+        val target = mediaPlayer.time + ms
+        mediaPlayer.time = if (length > 0L) target.coerceAtMost(length) else target
     }
 
     fun skipBackward(ms: Long = 10_000L) {
