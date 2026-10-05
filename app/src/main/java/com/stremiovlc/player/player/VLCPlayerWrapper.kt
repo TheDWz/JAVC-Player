@@ -65,6 +65,11 @@ class VLCPlayerWrapper(context: Context) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
+    // True from loadMedia() until the new media reports Playing; guards against late events
+    // from the previous media (VLC delivers events asynchronously).
+    @Volatile
+    private var awaitingPlayback = false
+
     private var surfaceView: SurfaceView? = null
     private var subtitleSurfaceView: SurfaceView? = null
 
@@ -99,6 +104,7 @@ class VLCPlayerWrapper(context: Context) {
         mediaPlayer.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Playing -> {
+                    awaitingPlayback = false
                     refreshTracks()
                     updateBluetoothAudioDelay(fromPlayingEvent = true)
                     _state.value = _state.value.copy(
@@ -114,6 +120,8 @@ class VLCPlayerWrapper(context: Context) {
                     _state.value = _state.value.copy(isPlaying = false)
                 }
                 MediaPlayer.Event.EndReached -> {
+                    // Ignore a late end event from the previous media.
+                    if (awaitingPlayback) return@setEventListener
                     _state.value = _state.value.copy(
                         isPlaying = false,
                         isEnded = true
@@ -127,6 +135,7 @@ class VLCPlayerWrapper(context: Context) {
                     )
                 }
                 MediaPlayer.Event.TimeChanged -> {
+                    if (awaitingPlayback) return@setEventListener
                     _state.value = _state.value.copy(
                         currentTimeMs = event.timeChanged,
                         currentChapterIndex = mediaPlayer.chapter
@@ -226,6 +235,10 @@ class VLCPlayerWrapper(context: Context) {
     }
 
     fun loadMedia(uri: Uri) {
+        awaitingPlayback = true
+        // Drop stale state (time, duration, ended flag, tracks) from any previous media so
+        // it cannot be saved or deleted against the newly loaded URI.
+        _state.value = PlayerState(playbackRate = _state.value.playbackRate)
         val media = Media(libVLC, uri)
         media.setHWDecoderEnabled(true, false)
         media.addOption(":network-caching=1500")
@@ -250,8 +263,9 @@ class VLCPlayerWrapper(context: Context) {
     }
 
     fun skipForward(ms: Long = 10_000L) {
-        val newTime = (mediaPlayer.time + ms).coerceAtMost(mediaPlayer.length)
-        mediaPlayer.time = newTime
+        val length = mediaPlayer.length
+        val target = mediaPlayer.time + ms
+        mediaPlayer.time = if (length > 0L) target.coerceAtMost(length) else target
     }
 
     fun skipBackward(ms: Long = 10_000L) {
