@@ -70,6 +70,10 @@ class VLCPlayerWrapper(context: Context) {
     @Volatile
     private var awaitingPlayback = false
 
+    // Resume point applied on the first Playing event: seeking earlier is often ignored, and the
+    // :start-time option decodes from a non-keyframe (seconds of corrupted picture).
+    private var pendingStartMs = 0L
+
     // Set when a transient focus loss (e.g. a notification sound, a call) paused us, so we resume after.
     private var pausedForFocusLoss = false
 
@@ -131,6 +135,10 @@ class VLCPlayerWrapper(context: Context) {
         mediaPlayer.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Playing -> {
+                    if (pendingStartMs > 0L) {
+                        mediaPlayer.time = pendingStartMs
+                        pendingStartMs = 0L
+                    }
                     awaitingPlayback = false
                     refreshTracks()
                     // VLC resets the delay per media; re-apply the user's offset.
@@ -210,8 +218,7 @@ class VLCPlayerWrapper(context: Context) {
         val media = Media(libVLC, uri)
         media.setHWDecoderEnabled(true, false)
         media.addOption(":network-caching=1500")
-        // Seeking via mediaPlayer.time before playback starts is often ignored; start-time is applied on open.
-        if (startMs > 0L) media.addOption(":start-time=${startMs / 1000.0}")
+        pendingStartMs = startMs
         mediaPlayer.media = media
         media.release()
     }
