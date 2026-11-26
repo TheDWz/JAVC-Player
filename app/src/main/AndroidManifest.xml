@@ -50,10 +50,6 @@
             </intent-filter>
 
         </activity>
-
-        <receiver
-            android:name=".PipActionReceiver"
-            android:exported="false" />
     </application>
 
 </manifest>

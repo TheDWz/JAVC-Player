@@ -12,18 +12,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -50,6 +54,8 @@ fun TrackSelectionSheet(
     onAudioTrackSelected: (Int) -> Unit,
     onSubtitleTrackSelected: (Int) -> Unit,
     onChapterSelected: (Int) -> Unit,
+    audioDelayMs: Long,
+    onAudioDelayChange: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -106,11 +112,15 @@ fun TrackSelectionSheet(
             val currentTabName = tabs.getOrNull(selectedTab) ?: tabs.first()
 
             when (currentTabName) {
-                "Audio" -> AudioTrackList(
-                    tracks = audioTracks,
-                    currentTrackId = currentAudioTrackId,
-                    onTrackSelected = onAudioTrackSelected
-                )
+                "Audio" -> {
+                    AudioDelayRow(audioDelayMs = audioDelayMs, onChange = onAudioDelayChange)
+                    HorizontalDivider(color = Color(0x33FFFFFF))
+                    AudioTrackList(
+                        tracks = audioTracks,
+                        currentTrackId = currentAudioTrackId,
+                        onTrackSelected = onAudioTrackSelected
+                    )
+                }
                 "Subtitles" -> SubtitleTrackList(
                     tracks = subtitleTracks,
                     currentTrackId = currentSubtitleTrackId,
@@ -122,6 +132,30 @@ fun TrackSelectionSheet(
                     onChapterSelected = onChapterSelected
                 )
             }
+        }
+    }
+}
+
+/** Manual A/V sync: positive delays audio (use when sound is ahead of the picture). */
+@Composable
+private fun AudioDelayRow(audioDelayMs: Long, onChange: (Long) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Audio delay: ${if (audioDelayMs > 0) "+" else ""}$audioDelayMs ms",
+            color = Color.White,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = { onChange(audioDelayMs - 50) }) {
+            Icon(Icons.Default.Remove, contentDescription = "Audio earlier by 50 ms", tint = Color.White)
+        }
+        TextButton(onClick = { onChange(0) }, enabled = audioDelayMs != 0L) { Text("Reset") }
+        IconButton(onClick = { onChange(audioDelayMs + 50) }) {
+            Icon(Icons.Default.Add, contentDescription = "Audio later by 50 ms", tint = Color.White)
         }
     }
 }

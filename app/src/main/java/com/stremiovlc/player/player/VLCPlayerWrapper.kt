@@ -1,21 +1,23 @@
 package com.stremiovlc.player.player
 
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.view.SurfaceView
-import android.view.ViewTreeObserver
+import android.os.Build
+import androidx.core.content.ContextCompat
+import com.stremiovlc.player.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IVLCVout
+import org.videolan.libvlc.util.VLCVideoLayout
 
 data class TrackInfo(
     val id: Int,
@@ -43,21 +45,19 @@ data class PlayerState(
     val currentChapterIndex: Int = -1,
     val isSeekable: Boolean = false,
     val isEnded: Boolean = false,
-    val playbackRate: Float = 1.0f
+    val playbackRate: Float = 1.0f,
+    /** User-set A/V offset; positive delays audio. Kept across media so a Bluetooth offset sticks. */
+    val audioDelayMs: Long = 0L,
+    /** Display size of the video (sample aspect applied), 0 until known. */
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0
 )
 
 class VLCPlayerWrapper(context: Context) {
 
-    // Tunable extra Bluetooth latency added on top of pipeline latency (in ms).
-    private companion object {
-        const val BT_EXTRA_MS = 150.0
-        const val PLAYING_DELAY_MS = 100L
-    }
-
     private val appContext = context.applicationContext
     private val audioManager =
         appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val libVLC: LibVLC
     private val mediaPlayer: MediaPlayer
@@ -70,43 +70,71 @@ class VLCPlayerWrapper(context: Context) {
     @Volatile
     private var awaitingPlayback = false
 
-    private var surfaceView: SurfaceView? = null
-    private var subtitleSurfaceView: SurfaceView? = null
+    // Set when a transient focus loss (e.g. a notification sound, a call) paused us, so we resume after.
+    private var pausedForFocusLoss = false
 
-    private val audioDeviceCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-            updateBluetoothAudioDelay()
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                pausedForFocusLoss = false
+                pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (_state.value.isPlaying) {
+                    pausedForFocusLoss = true
+                    mediaPlayer.pause()
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (pausedForFocusLoss) {
+                    pausedForFocusLoss = false
+                    mediaPlayer.play()
+                }
+            }
+            // AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK: the system ducks for us on API 26+.
         }
+    }
 
-        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-            updateBluetoothAudioDelay()
+    private val focusRequest: AudioFocusRequest? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener(focusListener)
+                .build()
+        } else null
+
+    // Headphones unplugged / Bluetooth disconnected: pause instead of blasting the speaker.
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pause()
         }
     }
 
     init {
-        val args = arrayListOf(
-            "--network-caching=1500",
-            "--no-drop-late-frames",
-            "--no-skip-frames",
-            "--avcodec-skiploopfilter", "1",
-            "--avcodec-skip-frame", "0",
-            "--avcodec-skip-idct", "0",
-            "--android-display-chroma", "RV32",
-            "--audio-resampler", "soxr",
-            "--stats",
-            "-vv"
-        )
+        val args = arrayListOf("--network-caching=1500", "--avcodec-skiploopfilter", "1")
+        if (BuildConfig.DEBUG) args += "-vv"
         libVLC = LibVLC(appContext, args)
         mediaPlayer = MediaPlayer(libVLC)
 
-        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        ContextCompat.registerReceiver(
+            appContext,
+            noisyReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         mediaPlayer.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Playing -> {
                     awaitingPlayback = false
                     refreshTracks()
-                    updateBluetoothAudioDelay(fromPlayingEvent = true)
+                    // VLC resets the delay per media; re-apply the user's offset.
+                    mediaPlayer.setAudioDelay(_state.value.audioDelayMs * 1000)
                     _state.value = _state.value.copy(
                         isPlaying = true,
                         isEnded = false,
@@ -122,6 +150,7 @@ class VLCPlayerWrapper(context: Context) {
                 MediaPlayer.Event.EndReached -> {
                     // Ignore a late end event from the previous media.
                     if (awaitingPlayback) return@setEventListener
+                    abandonFocus()
                     _state.value = _state.value.copy(
                         isPlaying = false,
                         isEnded = true
@@ -154,91 +183,30 @@ class VLCPlayerWrapper(context: Context) {
                 MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESDeleted -> {
                     refreshTracks()
                 }
+                MediaPlayer.Event.Vout -> {
+                    refreshVideoSize()
+                }
             }
         }
     }
 
-    fun attachSurfaces(video: SurfaceView, subtitle: SurfaceView) {
-        surfaceView = video
-        subtitleSurfaceView = subtitle
-
-        val vlcVout: IVLCVout = mediaPlayer.vlcVout
-        if (!vlcVout.areViewsAttached()) {
-            vlcVout.setVideoView(video)
-            vlcVout.setSubtitlesView(subtitle)
-
-            // Ensure LibVLC knows the actual surface size so it can
-            // center the video correctly inside the view.
-            val vto: ViewTreeObserver = video.viewTreeObserver
-            if (vto.isAlive) {
-                vto.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-                    override fun onGlobalLayout() {
-                        if (video.width > 0 && video.height > 0) {
-                            vlcVout.setWindowSize(video.width, video.height)
-                            video.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                        }
-                    }
-                })
-            }
-
-            // Let VLC choose the best scaling/aspect for the surface.
-            mediaPlayer.setScale(0f)
-            mediaPlayer.setAspectRatio(null)
-
-            vlcVout.attachViews()
-        }
+    /** VLCVideoLayout sizes the video and subtitle surfaces itself, including PiP resizes. */
+    fun attachViews(layout: VLCVideoLayout) {
+        mediaPlayer.attachViews(layout, null, true, false)
     }
 
-    /**
-     * Ensures that the video/subtitle surfaces are attached to LibVLC.
-     * Useful after returning from background / PiP when Vout may have been dropped.
-     */
-    fun ensureSurfacesAttached() {
-        val video = surfaceView
-        val subtitle = subtitleSurfaceView
-        if (video != null && subtitle != null) {
-            val vlcVout: IVLCVout = mediaPlayer.vlcVout
-            if (!vlcVout.areViewsAttached()) {
-                vlcVout.setVideoView(video)
-                vlcVout.setSubtitlesView(subtitle)
-                // We don't need to reset window size here; LibVLC will update on next layout.
-                mediaPlayer.setScale(0f)
-                mediaPlayer.setAspectRatio(null)
-                vlcVout.attachViews()
-            }
-        }
-    }
-
-    /**
-     * Updates LibVLC's output window size to match the current surface dimensions.
-     * Call this when the surface is resized (e.g. entering or leaving PiP) so video
-     * scales to fit and stays centered.
-     */
-    fun updateWindowSize() {
-        val video = surfaceView ?: return
-        val vlcVout: IVLCVout = mediaPlayer.vlcVout
-        if (!vlcVout.areViewsAttached()) return
-        if (video.width > 0 && video.height > 0) {
-            vlcVout.setWindowSize(video.width, video.height)
-            mediaPlayer.setScale(0f)
-            mediaPlayer.setAspectRatio(null)
-        }
-    }
-
-    fun detachSurfaces() {
-        val vlcVout = mediaPlayer.vlcVout
-        if (vlcVout.areViewsAttached()) {
-            vlcVout.detachViews()
-        }
-        surfaceView = null
-        subtitleSurfaceView = null
+    fun detachViews() {
+        mediaPlayer.detachViews()
     }
 
     fun loadMedia(uri: Uri, startMs: Long = 0L) {
         awaitingPlayback = true
         // Drop stale state (time, duration, ended flag, tracks) from any previous media so
         // it cannot be saved or deleted against the newly loaded URI.
-        _state.value = PlayerState(playbackRate = _state.value.playbackRate)
+        _state.value = PlayerState(
+            playbackRate = _state.value.playbackRate,
+            audioDelayMs = _state.value.audioDelayMs
+        )
         val media = Media(libVLC, uri)
         media.setHWDecoderEnabled(true, false)
         media.addOption(":network-caching=1500")
@@ -249,6 +217,7 @@ class VLCPlayerWrapper(context: Context) {
     }
 
     fun play() {
+        requestFocus()
         mediaPlayer.play()
     }
 
@@ -275,23 +244,17 @@ class VLCPlayerWrapper(context: Context) {
         mediaPlayer.time = newTime
     }
 
-    /**
-     * Attempts to resynchronize audio/video by seeking to the current playback time.
-     * Useful after mode changes like entering or exiting PiP.
-     */
-    fun resyncPosition() {
-        val current = mediaPlayer.time
-        if (current > 0L) {
-            mediaPlayer.time = current
-        }
-    }
-
     fun setRate(rate: Float) {
         mediaPlayer.setRate(rate)
         _state.value = _state.value.copy(playbackRate = rate)
     }
 
     fun getRate(): Float = mediaPlayer.rate
+
+    fun setAudioDelay(delayMs: Long) {
+        mediaPlayer.setAudioDelay(delayMs * 1000) // VLC takes microseconds
+        _state.value = _state.value.copy(audioDelayMs = delayMs)
+    }
 
     fun setAudioTrack(trackId: Int) {
         mediaPlayer.setAudioTrack(trackId)
@@ -308,77 +271,43 @@ class VLCPlayerWrapper(context: Context) {
         _state.value = _state.value.copy(currentChapterIndex = index)
     }
 
-    fun getCurrentTimeMs(): Long = mediaPlayer.time
-
-    fun getDurationMs(): Long = mediaPlayer.length
-
     fun stop() {
         mediaPlayer.stop()
     }
 
     fun release() {
-        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        abandonFocus()
+        appContext.unregisterReceiver(noisyReceiver)
         mediaPlayer.release()
         libVLC.release()
     }
 
-    private fun updateBluetoothAudioDelay(fromPlayingEvent: Boolean = false) {
-        val delayMs = if (fromPlayingEvent) PLAYING_DELAY_MS else 0L
-
-        val runnable = Runnable {
-            updateBluetoothAudioDelayInternal()
-        }
-
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            if (delayMs > 0L) {
-                mainHandler.postDelayed(runnable, delayMs)
-            } else {
-                runnable.run()
-            }
+    private fun requestFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioManager.requestAudioFocus(focusRequest!!)
         } else {
-            if (delayMs > 0L) {
-                mainHandler.postDelayed(runnable, delayMs)
-            } else {
-                mainHandler.post(runnable)
-            }
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
         }
     }
 
-    private fun updateBluetoothAudioDelayInternal() {
-        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-
-        val hasBluetoothOutput = devices.any { device ->
-            when (device.type) {
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                AudioDeviceInfo.TYPE_BLE_SPEAKER -> true
-                else -> false
-            }
+    private fun abandonFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioManager.abandonAudioFocusRequest(focusRequest!!)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(focusListener)
         }
+    }
 
-        if (!hasBluetoothOutput) {
-            mediaPlayer.setAudioDelay(0L)
-            return
-        }
-
-        val sampleRate = audioManager
-            .getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
-            ?.toIntOrNull()
-            ?.takeIf { it > 0 }
-            ?: 48_000
-
-        val framesPerBuffer = audioManager
-            .getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
-            ?.toIntOrNull()
-            ?.takeIf { it > 0 }
-            ?: 256
-
-        val baseLatencyMs = framesPerBuffer * 1000.0 / sampleRate.toDouble()
-        val totalLatencyMs = baseLatencyMs + BT_EXTRA_MS
-        val latencyUs = (totalLatencyMs * 1000.0).toLong()
-
-        mediaPlayer.setAudioDelay(-latencyUs)
+    private fun refreshVideoSize() {
+        val track = mediaPlayer.currentVideoTrack ?: return
+        if (track.width <= 0 || track.height <= 0) return
+        val sar = if (track.sarNum > 0 && track.sarDen > 0) track.sarNum.toFloat() / track.sarDen else 1f
+        _state.value = _state.value.copy(
+            videoWidth = (track.width * sar).toInt(),
+            videoHeight = track.height
+        )
     }
 
     private fun refreshTracks() {
@@ -408,5 +337,6 @@ class VLCPlayerWrapper(context: Context) {
             currentSubtitleTrackId = mediaPlayer.spuTrack,
             currentChapterIndex = mediaPlayer.chapter
         )
+        refreshVideoSize()
     }
 }

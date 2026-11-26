@@ -151,6 +151,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setAudioTrack(id: Int) = playerWrapper.setAudioTrack(id)
     fun setSubtitleTrack(id: Int) = playerWrapper.setSubtitleTrack(id)
     fun setChapter(index: Int) = playerWrapper.setChapter(index)
+    fun setAudioDelay(ms: Long) = playerWrapper.setAudioDelay(ms)
 
     fun setPictureInPictureMode(inPiP: Boolean) {
         _isInPictureInPictureMode.value = inPiP

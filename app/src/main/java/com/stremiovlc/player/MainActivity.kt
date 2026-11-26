@@ -3,6 +3,9 @@ package com.stremiovlc.player
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
@@ -15,6 +18,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -49,11 +53,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.stremiovlc.player.player.PlayerState
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import com.stremiovlc.player.ui.PlayerScreen
 import com.stremiovlc.player.viewmodel.PlayerViewModel
 
 private const val TAG = "JAVC"
+private const val ACTION_PIP_TOGGLE_PLAY = "com.stremiovlc.player.PIP_TOGGLE_PLAY"
 
 class MainActivity : ComponentActivity() {
 
@@ -67,12 +74,10 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
 
         viewModel = ViewModelProvider(this)[PlayerViewModel::class.java]
-        PipActionHandler.onTogglePlay = { viewModel.togglePlayPause() }
-
-        // Configure PiP parameters once, including auto-enter and actions on supported versions.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            updatePipParamsWithActions()
-        }
+        ContextCompat.registerReceiver(
+            this, pipReceiver, IntentFilter(ACTION_PIP_TOGGLE_PLAY), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        trackPipParams()
 
         val intentUri = extractUri(intent)
         logIntent(intent)
@@ -142,15 +147,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // When coming back from background / PiP, make sure VLC
-        // is still attached to the existing SurfaceViews and that
-        // the video output is sized to the full-screen surface.
-        viewModel.playerWrapper.ensureSurfacesAttached()
-        window.decorView.post {
-            viewModel.playerWrapper.updateWindowSize()
-            // Nudge LibVLC to resync A/V after returning from PiP/background.
-            viewModel.playerWrapper.resyncPosition()
-        }
+        hideSystemBars()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(pipReceiver)
     }
 
     override fun onStop() {
@@ -177,21 +179,6 @@ class MainActivity : ComponentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         viewModel.setPictureInPictureMode(isInPictureInPictureMode)
-
-        if (isInPictureInPictureMode) {
-            // When entering PiP, update the window size once the PiP layout has settled
-            // so the video scales and centers correctly inside the PiP window.
-            window.decorView.post {
-                viewModel.playerWrapper.updateWindowSize()
-                window.decorView.postDelayed({
-                    viewModel.playerWrapper.updateWindowSize()
-                    // After PiP has fully settled, resync A/V at the current timestamp.
-                    viewModel.playerWrapper.resyncPosition()
-                }, 150)
-            }
-        }
-        // When leaving PiP we don't touch the window size here; instead we correct it
-        // in onResume where the full-screen surface size is known.
     }
 
     /**
@@ -255,24 +242,47 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
-    private fun updatePipParamsWithActions() {
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == ACTION_PIP_TOGGLE_PLAY) viewModel.togglePlayPause()
+        }
+    }
+
+    /** Keeps the PiP button (play vs pause) and aspect ratio in step with the player. */
+    private fun trackPipParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        lifecycleScope.launch {
+            viewModel.playerState
+                .map { Triple(it.isPlaying, it.videoWidth, it.videoHeight) }
+                .distinctUntilChanged()
+                .collect { (playing, w, h) -> updatePipParams(playing, w, h) }
+        }
+    }
+
+    private fun updatePipParams(isPlaying: Boolean, videoWidth: Int, videoHeight: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 
-        val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
+        // Android rejects PiP ratios outside 1:2.39 .. 2.39:1.
+        val ratio = if (videoWidth > 0 && videoHeight > 0) {
+            val clamped = (videoWidth.toFloat() / videoHeight).coerceIn(1 / 2.39f, 2.39f)
+            Rational((clamped * 1000).toInt(), 1000)
+        } else Rational(16, 9)
 
+        val builder = PictureInPictureParams.Builder().setAspectRatio(ratio)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder.setAutoEnterEnabled(true)
+            builder.setAutoEnterEnabled(isPlaying)
         }
 
-        // Single pause action for PiP; it toggles playback via PipActionHandler.
-        val intent = Intent(this, PipActionReceiver::class.java).setAction(PipActionHandler.ACTION_TOGGLE_PLAY)
-        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, flags)
-
-        val icon = Icon.createWithResource(this, android.R.drawable.ic_media_pause)
-        val action = RemoteAction(icon, "Pause", "Pause playback", pendingIntent)
-
+        val intent = Intent(ACTION_PIP_TOGGLE_PLAY).setPackage(packageName)
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val (iconRes, label) = if (isPlaying) {
+            android.R.drawable.ic_media_pause to "Pause"
+        } else {
+            android.R.drawable.ic_media_play to "Play"
+        }
+        val action = RemoteAction(Icon.createWithResource(this, iconRes), label, label, pendingIntent)
         builder.setActions(listOf(action))
 
         val params = builder.build()

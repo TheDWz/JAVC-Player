@@ -2,8 +2,6 @@ package com.stremiovlc.player.ui
 
 import android.content.Context
 import android.media.AudioManager
-import android.view.LayoutInflater
-import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -28,7 +26,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.stremiovlc.player.R
 import com.stremiovlc.player.ui.components.PlayerControls
 import com.stremiovlc.player.ui.components.SpeedIndicator
 import com.stremiovlc.player.ui.components.TrackSelectionSheet
@@ -36,6 +33,7 @@ import com.stremiovlc.player.ui.components.VolumeIndicator
 import com.stremiovlc.player.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import org.videolan.libvlc.util.VLCVideoLayout
 
 @Composable
 fun PlayerScreen(
@@ -139,11 +137,7 @@ fun PlayerScreen(
         // VLC SurfaceView
         AndroidView(
             factory = { ctx ->
-                val view = LayoutInflater.from(ctx).inflate(R.layout.vlc_surface, null)
-                val videoSurface = view.findViewById<SurfaceView>(R.id.vlc_surface)
-                val subtitleSurface = view.findViewById<SurfaceView>(R.id.vlc_subtitle_surface)
-                viewModel.playerWrapper.attachSurfaces(videoSurface, subtitleSurface)
-                view
+                VLCVideoLayout(ctx).also { viewModel.playerWrapper.attachViews(it) }
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -209,6 +203,8 @@ fun PlayerScreen(
                 onAudioTrackSelected = { viewModel.setAudioTrack(it) },
                 onSubtitleTrackSelected = { viewModel.setSubtitleTrack(it) },
                 onChapterSelected = { viewModel.setChapter(it) },
+                audioDelayMs = playerState.audioDelayMs,
+                onAudioDelayChange = { viewModel.setAudioDelay(it) },
                 onDismiss = { showTrackSheet = false }
             )
         }
@@ -218,7 +214,7 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         onDispose {
             viewModel.savePositionNow()
-            viewModel.playerWrapper.detachSurfaces()
+            viewModel.playerWrapper.detachViews()
         }
     }
 }
