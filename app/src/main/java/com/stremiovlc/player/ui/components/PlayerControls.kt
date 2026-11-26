@@ -165,7 +165,7 @@ fun PlayerControls(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${formatTimeDisplay(playerState.currentTimeMs)} / ${formatTimeDisplay(playerState.durationMs)}",
+                        text = "${formatTime(playerState.currentTimeMs)} / ${formatTime(playerState.durationMs)}",
                         color = Color.White,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -235,7 +235,7 @@ private fun SeekBar(
     }
 }
 
-private fun formatTimeDisplay(ms: Long): String {
+internal fun formatTime(ms: Long): String {
     if (ms <= 0) return "0:00"
     val totalSeconds = ms / 1000
     val hours = totalSeconds / 3600
