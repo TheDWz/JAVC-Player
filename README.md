@@ -6,6 +6,8 @@ An Android video player built with libVLC and Jetpack Compose, designed primaril
 
 - **Stremio Integration** -- Registers as an external video player via `ACTION_VIEW` intent. Select this app as your external player in Stremio settings.
 - **Resume Playback** -- Automatically remembers where you stopped in a video and resumes from that position next time.
+- **Watch Progress Sync** -- Reports where you stopped (and when an episode finishes) back to Stremio / Nuvio, and resumes from the position they send.
+- **Audio Delay** -- Adjust A/V sync in 50 ms steps from the Audio tab if a Bluetooth headset is out of sync.
 - **Hold-to-2x Speed** -- Press and hold anywhere on the video to play at 2x speed. Release to return to normal speed.
 - **Track Selection** -- Detects and lists all audio tracks, subtitle tracks, and chapters embedded in the stream. Accessible via the track selection button in the controls overlay.
 - **Manual URL Entry** -- When launched directly (not from Stremio), provides a URL input screen to play any stream.
@@ -17,7 +19,7 @@ An Android video player built with libVLC and Jetpack Compose, designed primaril
 
 ## Building
 
-1. Open the project in Android Studio
+1. Open the project in Android Studio (or run `./gradlew assembleDebug` with JDK 17-21)
 2. Sync Gradle files
 3. Build and run on a device or emulator
 
@@ -42,4 +44,4 @@ An Android video player built with libVLC and Jetpack Compose, designed primaril
 4. This was made to my own very specific use case.
 5. If this doesn't work on your phone, idk bro.
 
-## [Download it here](https://github.com/TheDWz/JAVC-Player/releases/tag/1.0)
+## [Download it here](https://github.com/TheDWz/JAVC-Player/releases/latest)
