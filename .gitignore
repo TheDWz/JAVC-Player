@@ -22,3 +22,9 @@ secrets.properties
 .DS_Store
 Thumbs.db
 *.apk
+
+# Release outputs and signing secrets
+app/release/
+keystore.properties
+*.jks
+*.keystore
