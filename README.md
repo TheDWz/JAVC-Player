@@ -15,6 +15,7 @@ An Android video player built with libVLC and Jetpack Compose, designed primaril
 ## Requirements
 
 - Android 7.0 (API 24) or higher
+- Download the APK for your phone's CPU type: **`arm64-v8a`** fits almost every phone from 2017 on. Use `armeabi-v7a` only for old 32-bit phones; `x86_64` and `x86` are for emulators.
 - Android Studio Hedgehog or newer
 
 ## Building
