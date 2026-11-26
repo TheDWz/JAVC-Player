@@ -50,8 +50,19 @@ data class PlayerState(
     val audioDelayMs: Long = 0L,
     /** Display size of the video (sample aspect applied), 0 until known. */
     val videoWidth: Int = 0,
-    val videoHeight: Int = 0
+    val videoHeight: Int = 0,
+    /** Set when playback stopped because of a problem (dead stream, unplayable file); shown with a retry. */
+    val error: String? = null
 )
+
+/**
+ * VLC also reports "end reached" when a network stream simply drops (Wi-Fi loss, expired debrid link),
+ * so only treat it as finished when playback got to within a minute (or 5%) of the end.
+ */
+internal fun isRealEnd(positionMs: Long, durationMs: Long): Boolean {
+    if (durationMs <= 0L) return true // unknown length (live): nothing to compare against
+    return durationMs - positionMs <= minOf(60_000L, durationMs / 20)
+}
 
 class VLCPlayerWrapper(context: Context) {
 
@@ -159,9 +170,19 @@ class VLCPlayerWrapper(context: Context) {
                     // Ignore a late end event from the previous media.
                     if (awaitingPlayback) return@setEventListener
                     abandonFocus()
+                    val s = _state.value
+                    _state.value = if (isRealEnd(s.currentTimeMs, s.durationMs)) {
+                        s.copy(isPlaying = false, isEnded = true)
+                    } else {
+                        s.copy(isPlaying = false, isBuffering = false, error = "Stream lost")
+                    }
+                }
+                MediaPlayer.Event.EncounteredError -> {
+                    abandonFocus()
                     _state.value = _state.value.copy(
                         isPlaying = false,
-                        isEnded = true
+                        isBuffering = false,
+                        error = "Couldn't play this stream"
                     )
                 }
                 MediaPlayer.Event.Buffering -> {

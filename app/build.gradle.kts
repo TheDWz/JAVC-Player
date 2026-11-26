@@ -15,8 +15,8 @@ android {
         applicationId = "com.stremiovlc.player"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.1.2"
     }
 
     // One APK per CPU type: libVLC's native code is ~45 MB per type, so a combined APK is ~200 MB.

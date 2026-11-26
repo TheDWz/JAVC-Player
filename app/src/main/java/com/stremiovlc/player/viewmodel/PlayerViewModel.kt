@@ -61,6 +61,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Reload the current stream at the last known position, e.g. after it dropped. */
+    fun retry() {
+        val uri = _currentUri.value ?: return
+        loadAndPlay(Uri.parse(uri), playerWrapper.state.value.currentTimeMs, _title.value)
+    }
+
     private suspend fun savedResumePosition(uriString: String): Long {
         val saved = dao.getPosition(uriString) ?: return 0L
         val nearEnd = saved.durationMs > 0 && saved.positionMs.toFloat() / saved.durationMs >= 0.95f

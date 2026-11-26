@@ -142,8 +142,12 @@ fun PlayerScreen(
                             tryAwaitRelease()
                             viewModel.onSpeedHoldEnd()
                         } else if (released) {
-                            controlsVisible = !controlsVisible
-                            lastInteractionTime = System.currentTimeMillis()
+                            if (playerState.error != null) {
+                                viewModel.retry()
+                            } else {
+                                controlsVisible = !controlsVisible
+                                lastInteractionTime = System.currentTimeMillis()
+                            }
                         }
                     }
                 )
@@ -155,6 +159,13 @@ fun PlayerScreen(
                 VLCVideoLayout(ctx).also { viewModel.playerWrapper.attachViews(it) }
             },
             modifier = Modifier.fillMaxSize()
+        )
+
+        // shortcut: plain pill until the 1.2.0 error overlay (Retry/Back buttons) lands.
+        OsdPill(
+            visible = playerState.error != null,
+            text = "${playerState.error ?: ""}. Tap to retry",
+            modifier = Modifier.align(Alignment.Center)
         )
 
         OsdPill(
