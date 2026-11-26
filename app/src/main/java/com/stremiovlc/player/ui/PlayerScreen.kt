@@ -47,6 +47,7 @@ fun PlayerScreen(
     val playerState by viewModel.playerState.collectAsState()
     val showSpeed by viewModel.showSpeedIndicator.collectAsState()
     val isInPiP by viewModel.isInPictureInPictureMode.collectAsState()
+    val title by viewModel.title.collectAsState()
     val context = LocalContext.current
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
@@ -190,6 +191,7 @@ fun PlayerScreen(
                 onBack()
             },
             playbackSpeed = playerState.playbackRate,
+            title = title,
             onSpeedClick = {
                 viewModel.cyclePlaybackSpeed()
                 lastInteractionTime = System.currentTimeMillis()

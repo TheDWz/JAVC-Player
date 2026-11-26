@@ -234,7 +234,7 @@ class VLCPlayerWrapper(context: Context) {
         subtitleSurfaceView = null
     }
 
-    fun loadMedia(uri: Uri) {
+    fun loadMedia(uri: Uri, startMs: Long = 0L) {
         awaitingPlayback = true
         // Drop stale state (time, duration, ended flag, tracks) from any previous media so
         // it cannot be saved or deleted against the newly loaded URI.
@@ -242,6 +242,8 @@ class VLCPlayerWrapper(context: Context) {
         val media = Media(libVLC, uri)
         media.setHWDecoderEnabled(true, false)
         media.addOption(":network-caching=1500")
+        // Seeking via mediaPlayer.time before playback starts is often ignored; start-time is applied on open.
+        if (startMs > 0L) media.addOption(":start-time=${startMs / 1000.0}")
         mediaPlayer.media = media
         media.release()
     }

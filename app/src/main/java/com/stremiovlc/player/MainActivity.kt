@@ -9,6 +9,7 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -46,8 +47,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import com.stremiovlc.player.player.PlayerState
+import kotlinx.coroutines.launch
 import com.stremiovlc.player.ui.PlayerScreen
 import com.stremiovlc.player.viewmodel.PlayerViewModel
+
+private const val TAG = "JAVC"
 
 class MainActivity : ComponentActivity() {
 
@@ -69,6 +75,8 @@ class MainActivity : ComponentActivity() {
         }
 
         val intentUri = extractUri(intent)
+        logIntent(intent)
+        trackResult()
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -91,7 +99,7 @@ class MainActivity : ComponentActivity() {
 
         // Skip on recreation (e.g. rotation): the ViewModel already holds this media.
         if (intentUri != null && viewModel.currentUri.value != intentUri.toString()) {
-            viewModel.loadAndPlay(intentUri)
+            viewModel.loadAndPlay(intentUri, callerPosition(intent), intent.getStringExtra("title"))
         }
     }
 
@@ -104,10 +112,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        logIntent(intent)
         val uri = extractUri(intent)
         if (uri != null) {
             viewModel.playerWrapper.stop()
-            viewModel.loadAndPlay(uri)
+            viewModel.loadAndPlay(uri, callerPosition(intent), intent.getStringExtra("title"))
         }
     }
 
@@ -127,6 +137,7 @@ class MainActivity : ComponentActivity() {
         }
 
         viewModel.savePositionNow()
+        publishResult(viewModel.playerState.value)
     }
 
     override fun onResume() {
@@ -145,6 +156,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         viewModel.savePositionNow()
+        publishResult(viewModel.playerState.value)
     }
 
     override fun onUserLeaveHint() {
@@ -180,6 +192,60 @@ class MainActivity : ComponentActivity() {
         }
         // When leaving PiP we don't touch the window size here; instead we correct it
         // in onResume where the full-screen surface size is known.
+    }
+
+    /**
+     * Stremio and Nuvio read watch progress from the activity result. Keep it current so every
+     * exit path (Back, PiP dismissed, process killed) reports where playback got to.
+     */
+    private fun trackResult() {
+        var lastPublishedMs = -1L
+        lifecycleScope.launch {
+            viewModel.playerState.collect { state ->
+                if (state.isEnded) {
+                    publishResult(state)
+                    // Hand control back so the caller can mark it watched / offer the next episode.
+                    if (intent?.action == Intent.ACTION_VIEW) finish()
+                } else if (state.currentTimeMs > 0 &&
+                    (lastPublishedMs < 0 || kotlin.math.abs(state.currentTimeMs - lastPublishedMs) >= 5_000)
+                ) {
+                    lastPublishedMs = state.currentTimeMs
+                    publishResult(state)
+                }
+            }
+        }
+    }
+
+    private fun publishResult(state: PlayerState) {
+        if (state.durationMs <= 0) return
+        val completed = state.isEnded
+        // Callers such as Nuvio drop results without a position, so a finished video reports its full length.
+        val position = if (completed) state.durationMs else state.currentTimeMs
+        val result = Intent("com.mxtech.intent.result.VIEW").apply {
+            // MX Player keys are ints, VLC keys are longs; callers read them with typed getters.
+            putExtra("position", position.toInt())
+            putExtra("duration", state.durationMs.toInt())
+            putExtra("end_by", if (completed) "playback_completion" else "user")
+            putExtra("extra_position", position)
+            putExtra("extra_duration", state.durationMs)
+            data = intent?.data
+        }
+        setResult(RESULT_OK, result)
+        Log.d(TAG, "result position=$position duration=${state.durationMs} completed=$completed caller=$callingActivity")
+    }
+
+    private fun callerPosition(intent: Intent): Long {
+        val extras = intent.extras ?: return 0L
+        for (key in listOf("extra_position", "position", "startfrom")) {
+            val ms = (extras.get(key) as? Number)?.toLong() ?: continue
+            if (ms > 0L) return ms
+        }
+        return 0L
+    }
+
+    private fun logIntent(intent: Intent?) {
+        val extras = intent?.extras?.keySet()?.joinToString { "$it=${intent.extras?.get(it)}" }
+        Log.d(TAG, "intent action=${intent?.action} data=${intent?.data} caller=$callingActivity extras=[$extras]")
     }
 
     private fun extractUri(intent: Intent?): Uri? {

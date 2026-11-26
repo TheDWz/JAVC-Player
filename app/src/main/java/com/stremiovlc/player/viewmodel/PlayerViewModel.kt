@@ -18,7 +18,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     val playerWrapper = VLCPlayerWrapper(application)
 
-    private val dao = (application as PlayerApplication).database.playbackPositionDao()
+    private val app = application as PlayerApplication
+    private val dao = app.database.playbackPositionDao()
 
     private val _currentUri = MutableStateFlow<String?>(null)
     val currentUri: StateFlow<String?> = _currentUri.asStateFlow()
@@ -33,33 +34,37 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private var positionSaveJob: Job? = null
     private var lastSavedTimeMs = 0L
-    private var resumeApplied = false
     private var basePlaybackRate = 1.0f
     private var isSpeedHoldActive = false
 
     private val availablePlaybackRates = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-    fun loadAndPlay(uri: Uri) {
+    private val _title = MutableStateFlow<String?>(null)
+    val title: StateFlow<String?> = _title.asStateFlow()
+
+    private var loadJob: Job? = null
+
+    /** [callerPositionMs] is the resume point sent by Stremio/Nuvio; it wins over our own DB. */
+    fun loadAndPlay(uri: Uri, callerPositionMs: Long = 0L, title: String? = null) {
         val uriString = uri.toString()
         _currentUri.value = uriString
-        resumeApplied = false
+        _title.value = title
         lastSavedTimeMs = 0L
+        positionSaveJob?.cancel()
 
-        playerWrapper.loadMedia(uri)
-        playerWrapper.play()
-
-        startPositionTracking(uriString)
-        checkResume(uriString)
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val startMs = if (callerPositionMs > 0L) callerPositionMs else savedResumePosition(uriString)
+            playerWrapper.loadMedia(uri, startMs)
+            playerWrapper.play()
+            startPositionTracking(uriString)
+        }
     }
 
-    private fun checkResume(uriString: String) {
-        viewModelScope.launch {
-            val saved = dao.getPosition(uriString) ?: return@launch
-            if (saved.durationMs > 0 && saved.positionMs.toFloat() / saved.durationMs < 0.95f) {
-                playerWrapper.seekTo(saved.positionMs)
-                resumeApplied = true
-            }
-        }
+    private suspend fun savedResumePosition(uriString: String): Long {
+        val saved = dao.getPosition(uriString) ?: return 0L
+        val nearEnd = saved.durationMs > 0 && saved.positionMs.toFloat() / saved.durationMs >= 0.95f
+        return if (nearEnd) 0L else saved.positionMs
     }
 
     private fun startPositionTracking(uriString: String) {
@@ -67,7 +72,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         positionSaveJob = viewModelScope.launch {
             playerWrapper.state.collect { state ->
                 if (state.isEnded) {
-                    dao.deletePosition(uriString)
+                    // The activity finishes on end, so don't let viewModelScope's cancellation drop this.
+                    app.appScope.launch { dao.deletePosition(uriString) }
                     return@collect
                 }
 
@@ -91,9 +97,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun savePositionNow() {
         val uriString = _currentUri.value ?: return
+        // While the new media is still loading, state still belongs to the previous media.
+        if (loadJob?.isActive == true) return
         val state = playerWrapper.state.value
         if (!state.isEnded && state.currentTimeMs > 0 && state.durationMs > 0) {
-            viewModelScope.launch {
+            app.appScope.launch {
                 dao.savePosition(
                     PlaybackPositionEntity(
                         uri = uriString,

@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.stremiovlc.player.player.PlayerState
 
@@ -55,6 +56,7 @@ fun PlayerControls(
     onBackClick: () -> Unit,
     playbackSpeed: Float,
     onSpeedClick: () -> Unit,
+    title: String? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -65,7 +67,7 @@ fun PlayerControls(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // Top gradient + back button
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
@@ -74,13 +76,23 @@ fun PlayerControls(
                         )
                     )
                     .systemBarsPadding()
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBackClick) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
                         tint = Color.White
+                    )
+                }
+                if (title != null) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
