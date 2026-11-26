@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -68,7 +69,7 @@ fun TrackSelectionSheet(
     }
 
     if (tabs.isEmpty()) {
-        onDismiss()
+        LaunchedEffect(Unit) { onDismiss() }
         return
     }
 
@@ -272,17 +273,5 @@ private fun TrackRow(
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
             color = Color.White
         )
-    }
-}
-
-private fun formatTime(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format("%d:%02d", minutes, seconds)
     }
 }

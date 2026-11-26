@@ -19,8 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun SpeedIndicator(
+fun OsdPill(
     visible: Boolean,
+    text: String,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -39,7 +40,7 @@ fun SpeedIndicator(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "2x Speed",
+                text = text,
                 color = Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold

@@ -12,6 +12,7 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
@@ -298,20 +299,37 @@ class MainActivity : ComponentActivity() {
         controller.hide(WindowInsetsCompat.Type.systemBars())
     }
 
-    private var currentBrightness = 0.5f
+    private var currentBrightness: Float? = null
 
-    fun increaseBrightness() {
-        currentBrightness = (currentBrightness + 0.05f).coerceIn(0.1f, 1f)
-        applyBrightness()
+    /** Resolves the real screen brightness the first time it is needed (the window exists by then). */
+    private fun initialBrightness(): Float {
+        currentBrightness?.let { return it }
+        val attribute = window.attributes.screenBrightness
+        val value = if (attribute >= 0f) {
+            attribute
+        } else {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+        }
+        currentBrightness = value
+        return value
     }
 
-    fun decreaseBrightness() {
-        currentBrightness = (currentBrightness - 0.05f).coerceIn(0.1f, 1f)
-        applyBrightness()
+    fun increaseBrightness(): Float {
+        val value = (initialBrightness() + 0.05f).coerceIn(0.1f, 1f)
+        currentBrightness = value
+        applyBrightness(value)
+        return value
     }
 
-    private fun applyBrightness() {
-        window.attributes = window.attributes.apply { screenBrightness = currentBrightness }
+    fun decreaseBrightness(): Float {
+        val value = (initialBrightness() - 0.05f).coerceIn(0.1f, 1f)
+        currentBrightness = value
+        applyBrightness(value)
+        return value
+    }
+
+    private fun applyBrightness(value: Float) {
+        window.attributes = window.attributes.apply { screenBrightness = value }
     }
 }
 

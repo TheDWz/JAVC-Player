@@ -26,10 +26,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.stremiovlc.player.ui.components.OsdPill
 import com.stremiovlc.player.ui.components.PlayerControls
-import com.stremiovlc.player.ui.components.SpeedIndicator
 import com.stremiovlc.player.ui.components.TrackSelectionSheet
-import com.stremiovlc.player.ui.components.VolumeIndicator
 import com.stremiovlc.player.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -39,8 +38,8 @@ import org.videolan.libvlc.util.VLCVideoLayout
 fun PlayerScreen(
     viewModel: PlayerViewModel,
     onBack: () -> Unit,
-    onBrightnessUp: () -> Unit = {},
-    onBrightnessDown: () -> Unit = {}
+    onBrightnessUp: () -> Float = { 0f },
+    onBrightnessDown: () -> Float = { 0f }
 ) {
     val playerState by viewModel.playerState.collectAsState()
     val showSpeed by viewModel.showSpeedIndicator.collectAsState()
@@ -54,6 +53,8 @@ fun PlayerScreen(
     var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
     var showVolumeOverlay by remember { mutableStateOf(false) }
     var volumeOverlayPercent by remember { mutableStateOf(0) }
+    var showBrightnessOverlay by remember { mutableStateOf(false) }
+    var brightnessOverlayPercent by remember { mutableStateOf(0) }
 
     LaunchedEffect(showVolumeOverlay) {
         if (showVolumeOverlay) {
@@ -61,7 +62,13 @@ fun PlayerScreen(
             showVolumeOverlay = false
         }
     }
-    LaunchedEffect(controlsVisible, lastInteractionTime) {
+    LaunchedEffect(showBrightnessOverlay) {
+        if (showBrightnessOverlay) {
+            delay(1500)
+            showBrightnessOverlay = false
+        }
+    }
+    LaunchedEffect(controlsVisible, lastInteractionTime, playerState.isPlaying) {
         if (controlsVisible && playerState.isPlaying) {
             delay(4000)
             if (System.currentTimeMillis() - lastInteractionTime >= 3800) {
@@ -80,39 +87,47 @@ fun PlayerScreen(
         var accumulatedDrag by remember { mutableFloatStateOf(0f) }
         val stepPixels = 80f
 
+        val adjustVolume: (Int) -> Unit = { delta ->
+            val stream = AudioManager.STREAM_MUSIC
+            val maxVol = audioManager.getStreamMaxVolume(stream)
+            val currentVol = audioManager.getStreamVolume(stream)
+            val newVol = (currentVol + delta).coerceIn(0, maxVol)
+            audioManager.setStreamVolume(stream, newVol, 0)
+            volumeOverlayPercent = (newVol * 100 / maxVol).coerceIn(0, 100)
+            showVolumeOverlay = true
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(widthPx) {
                     detectVerticalDragGestures(
                         onDragStart = { offset -> dragStartX = offset.x; accumulatedDrag = 0f },
-                        onVerticalDrag = { _, dragAmount -> accumulatedDrag += dragAmount },
-                        onDragEnd = {
-                            val steps = (accumulatedDrag / stepPixels).toInt()
-                            if (steps == 0) return@detectVerticalDragGestures
-                            val leftHalf = dragStartX < widthPx / 2
-                            if (leftHalf) {
-                                if (steps < 0) repeat(-steps) { onBrightnessUp() }
-                                else repeat(steps) { onBrightnessDown() }
-                            } else {
-                                val stream = AudioManager.STREAM_MUSIC
-                                val maxVol = audioManager.getStreamMaxVolume(stream)
-                                val currentVol = audioManager.getStreamVolume(stream)
-                                if (steps < 0) {
-                                    // Swipe up -> increase volume
-                                    val newVol = (currentVol + (-steps)).coerceIn(0, maxVol)
-                                    audioManager.setStreamVolume(stream, newVol, 0)
-                                    volumeOverlayPercent = (newVol * 100 / maxVol).coerceIn(0, 100)
-                                    showVolumeOverlay = true
+                        onVerticalDrag = { _, dragAmount ->
+                            accumulatedDrag += dragAmount
+                            // Swipe up (negative) -> increase, swipe down (positive) -> decrease.
+                            while (accumulatedDrag <= -stepPixels) {
+                                accumulatedDrag += stepPixels
+                                if (dragStartX < widthPx / 2) {
+                                    val brightness = onBrightnessUp()
+                                    brightnessOverlayPercent = (brightness * 100).toInt().coerceIn(0, 100)
+                                    showBrightnessOverlay = true
                                 } else {
-                                    // Swipe down -> decrease volume
-                                    val newVol = (currentVol - steps).coerceIn(0, maxVol)
-                                    audioManager.setStreamVolume(stream, newVol, 0)
-                                    volumeOverlayPercent = (newVol * 100 / maxVol).coerceIn(0, 100)
-                                    showVolumeOverlay = true
+                                    adjustVolume(1)
                                 }
                             }
-                        }
+                            while (accumulatedDrag >= stepPixels) {
+                                accumulatedDrag -= stepPixels
+                                if (dragStartX < widthPx / 2) {
+                                    val brightness = onBrightnessDown()
+                                    brightnessOverlayPercent = (brightness * 100).toInt().coerceIn(0, 100)
+                                    showBrightnessOverlay = true
+                                } else {
+                                    adjustVolume(-1)
+                                }
+                            }
+                        },
+                        onDragEnd = { accumulatedDrag = 0f }
                     )
                 }
                 .pointerInput(Unit) {
@@ -142,16 +157,25 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        SpeedIndicator(
+        OsdPill(
             visible = showSpeed && !isInPiP,
+            text = "2x Speed",
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 48.dp)
         )
 
-        VolumeIndicator(
+        OsdPill(
             visible = showVolumeOverlay && !isInPiP,
-            volumePercent = volumeOverlayPercent,
+            text = "Volume $volumeOverlayPercent%",
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 48.dp)
+        )
+
+        OsdPill(
+            visible = showBrightnessOverlay && !isInPiP,
+            text = "Brightness $brightnessOverlayPercent%",
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 48.dp)
